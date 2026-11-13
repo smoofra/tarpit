@@ -291,8 +291,9 @@ func writeFile(r io.Reader, hdr *tar.Header, target string) error {
 	if err := os.Rename(tmp, target); err != nil {
 		return err
 	}
-	// Only the write bit matters on Windows; keep files writable there so a
-	// rerun can replace them.  Elsewhere, restore the archived permissions.
+	// Restore the archived permissions, but always keep the owner write bit
+	// so a rerun can replace the file.  (On Windows, the write bit is the
+	// only permission that matters.)
 	_ = os.Chmod(target, fs.FileMode(hdr.Mode).Perm()|0o200)
 	return nil
 }
