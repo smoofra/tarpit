@@ -243,8 +243,19 @@ func extractEntry(tr *tar.Reader, hdr *tar.Header, target string, st *stats, see
 
 	case tar.TypeSymlink:
 		st.symlinks++
-		if _, err := os.Lstat(target); err == nil {
-			return nil
+		if fi, err := os.Lstat(target); err == nil {
+			if fi.Mode().Type() != fs.ModeSymlink {
+				return warning{errors.New("something other than a symlink already exists at this path")}
+			}
+			cur, err := os.Readlink(target)
+			if err == nil && filepath.ToSlash(cur) == filepath.ToSlash(hdr.Linkname) {
+				return nil
+			}
+			// Stale symlink, e.g. from an earlier archive or an earlier
+			// entry for the same path; replace it.
+			if err := os.Remove(target); err != nil {
+				return err
+			}
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err

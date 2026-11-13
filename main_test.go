@@ -423,3 +423,50 @@ func TestDuplicatePathLaterCopyWins(t *testing.T) {
 		t.Errorf("rerun stats = %+v", *st)
 	}
 }
+
+func TestSymlinkWithWrongTargetReplaced(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	archive := writeArchive(t, false, entry{name: "cur", typ: tar.TypeSymlink, linkname: "v2"})
+	dest := t.TempDir()
+	if err := os.Symlink("v1", filepath.Join(dest, "cur")); err != nil {
+		t.Fatal(err)
+	}
+	st := mustExtract(t, archive, dest)
+	got, err := os.Readlink(filepath.Join(dest, "cur"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "v2" {
+		t.Errorf("symlink -> %q, want v2", got)
+	}
+	if st.failed != 0 {
+		t.Errorf("stats = %+v", *st)
+	}
+}
+
+func TestSymlinkOverNonSymlinkIsWarning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	archive := writeArchive(t, false,
+		entry{name: "f", typ: tar.TypeSymlink, linkname: "elsewhere"},
+		entry{name: "d", typ: tar.TypeSymlink, linkname: "elsewhere"},
+	)
+	dest := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dest, "f"), []byte("regular"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dest, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st := mustExtract(t, archive, dest)
+	assertFile(t, filepath.Join(dest, "f"), "regular")
+	if fi, err := os.Lstat(filepath.Join(dest, "d")); err != nil || !fi.IsDir() {
+		t.Errorf("directory d was replaced: %v", err)
+	}
+	if st.failed != 2 {
+		t.Errorf("stats = %+v", *st)
+	}
+}
