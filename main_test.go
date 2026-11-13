@@ -386,3 +386,21 @@ func TestSymlinkAtCachedParent(t *testing.T) {
 		t.Errorf("wrote outside dest: %v", entries)
 	}
 }
+
+func TestFileWhereDirectoryExistsIsWarning(t *testing.T) {
+	archive := writeArchive(t, false,
+		file("a/child.txt", "child"),
+		file("a", "file replacing a directory"),
+		file("later.txt", "still extracted"),
+	)
+	dest := t.TempDir()
+	st, err := extract(archive, dest, nil)
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	assertFile(t, filepath.Join(dest, "a", "child.txt"), "child")
+	assertFile(t, filepath.Join(dest, "later.txt"), "still extracted")
+	if st.failed != 1 {
+		t.Errorf("stats = %+v", *st)
+	}
+}

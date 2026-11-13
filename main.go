@@ -199,10 +199,15 @@ func extractEntry(tr *tar.Reader, hdr *tar.Header, target string, st *stats) err
 		return os.MkdirAll(target, 0o755)
 
 	case tar.TypeReg, tar.TypeRegA, tar.TypeGNUSparse:
-		if fi, err := os.Lstat(target); err == nil && fi.Mode().IsRegular() && fi.Size() == hdr.Size {
-			st.skipped++
-			st.bytesSkipped += hdr.Size
-			return nil
+		if fi, err := os.Lstat(target); err == nil {
+			if fi.Mode().IsRegular() && fi.Size() == hdr.Size {
+				st.skipped++
+				st.bytesSkipped += hdr.Size
+				return nil
+			}
+			if fi.IsDir() {
+				return warning{errors.New("a directory already exists at this path")}
+			}
 		}
 		if err := writeFile(tr, hdr, target); err != nil {
 			return err
