@@ -39,7 +39,7 @@ type stats struct {
 
 func main() {
 	dest := flag.String("C", ".", "directory to extract into")
-	bodyFile := flag.String("body-file", "", "also write a TSK body file listing every entry (\"-\" for stdout)")
+	bodyPath := flag.String("body-file", "", "also write a TSK body file listing every entry (\"-\" for stdout)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [-C dir] [-v] [--body-file file] archive.tar[.gz|.bz2]\n", os.Args[0])
 		flag.PrintDefaults()
@@ -52,25 +52,20 @@ func main() {
 	log.SetFlags(log.Ltime)
 
 	var body *bodyWriter
-	var bodyOut *bufio.Writer
-	if *bodyFile != "" {
-		out := os.Stdout
-		if *bodyFile != "-" {
-			f, err := os.Create(*bodyFile)
-			if err != nil {
-				log.Fatal(err)
-			}
-			defer f.Close()
-			out = f
+	var bf *bodyFile
+	if *bodyPath != "" {
+		var err error
+		bf, err = openBodyFile(*bodyPath)
+		if err != nil {
+			log.Fatal(err)
 		}
-		bodyOut = bufio.NewWriterSize(out, 1<<20)
-		body = newBodyWriter(bodyOut)
+		body = bf.bodyWriter
 	}
 
 	st, err := extract(flag.Arg(0), *dest, body)
-	if bodyOut != nil {
-		if ferr := bodyOut.Flush(); ferr != nil && err == nil {
-			err = fmt.Errorf("writing body file: %w", ferr)
+	if bf != nil {
+		if cerr := bf.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("writing body file: %w", cerr)
 		}
 	}
 	log.Printf("done: %d written (%s), %d skipped (%s), %d dirs, %d symlinks, %d hard links not extracted, %d failed",

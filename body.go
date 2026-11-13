@@ -2,11 +2,50 @@ package main
 
 import (
 	"archive/tar"
+	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"time"
 )
+
+// bodyFile is a buffered bodyWriter on a file that must be closed, so that
+// errors from flushing and closing it are reported.
+type bodyFile struct {
+	*bodyWriter
+	buf *bufio.Writer
+	c   io.Closer
+}
+
+// openBodyFile creates the body file at path, or uses stdout if path is "-".
+func openBodyFile(path string) (*bodyFile, error) {
+	if path == "-" {
+		return newBodyFile(nopCloser{os.Stdout}), nil
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	return newBodyFile(f), nil
+}
+
+func newBodyFile(wc io.WriteCloser) *bodyFile {
+	buf := bufio.NewWriterSize(wc, 1<<20)
+	return &bodyFile{bodyWriter: newBodyWriter(buf), buf: buf, c: wc}
+}
+
+func (b *bodyFile) Close() error {
+	err := b.buf.Flush()
+	if cerr := b.c.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+type nopCloser struct{ io.Writer }
+
+func (nopCloser) Close() error { return nil }
 
 // bodyWriter writes one line per archive entry in the Sleuth Kit 3.x body
 // file format, for timelining with mactime:

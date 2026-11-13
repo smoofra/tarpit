@@ -152,3 +152,53 @@ func TestModeString(t *testing.T) {
 		}
 	}
 }
+
+type closeFailer struct {
+	bytes.Buffer
+	closed bool
+}
+
+func (c *closeFailer) Close() error {
+	c.closed = true
+	return errors.New("close failed")
+}
+
+func TestBodyFileCloseErrorReported(t *testing.T) {
+	archive := writeArchive(t, false, file("a.txt", "a"))
+	out := &closeFailer{}
+	bf := newBodyFile(out)
+	if _, err := extract(archive, t.TempDir(), bf.bodyWriter); err != nil {
+		t.Fatal(err)
+	}
+	if err := bf.Close(); err == nil {
+		t.Error("Close succeeded despite the underlying close failing")
+	}
+	if !out.closed {
+		t.Error("underlying file was not closed")
+	}
+	if !strings.HasPrefix(out.String(), "0|a.txt|") {
+		t.Errorf("buffered data was not flushed: %q", out.String())
+	}
+}
+
+func TestOpenBodyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.body")
+	bf, err := openBodyFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := writeArchive(t, false, file("a.txt", "a"))
+	if _, err := extract(archive, t.TempDir(), bf.bodyWriter); err != nil {
+		t.Fatal(err)
+	}
+	if err := bf.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(got), "0|a.txt|") {
+		t.Errorf("body file = %q", got)
+	}
+}
