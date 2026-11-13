@@ -44,6 +44,8 @@ redirect to files outside it.  They are still listed in the body file.
 
 - A regular file is skipped if a file already exists at its destination with
   the same size.  Contents are not compared.
+- If the archive contains the same path more than once (e.g. from `tar -r`),
+  later copies are always written, so the last one wins.
 - Files are written to `name.tarpit-partial` and renamed into place once
   complete, so a file interrupted halfway never has its final name.
 - With an uncompressed `.tar`, skipped files are seeked past rather than read,

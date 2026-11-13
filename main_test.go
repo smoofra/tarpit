@@ -404,3 +404,22 @@ func TestFileWhereDirectoryExistsIsWarning(t *testing.T) {
 		t.Errorf("stats = %+v", *st)
 	}
 }
+
+func TestDuplicatePathLaterCopyWins(t *testing.T) {
+	archive := writeArchive(t, false,
+		file("conf", "v1v1"),
+		file("other", "x"),
+		file("conf", "v2v2"), // same size, appended later
+	)
+	dest := t.TempDir()
+	mustExtract(t, archive, dest)
+	assertFile(t, filepath.Join(dest, "conf"), "v2v2")
+
+	// A resumed run must also end with the later copy, even though the
+	// file on disk already has the right size.
+	st := mustExtract(t, archive, dest)
+	assertFile(t, filepath.Join(dest, "conf"), "v2v2")
+	if st.skipped != 2 || st.written != 1 {
+		t.Errorf("rerun stats = %+v", *st)
+	}
+}

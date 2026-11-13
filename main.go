@@ -19,6 +19,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"hash/maphash"
 	"io"
 	"io/fs"
 	"log"
@@ -94,6 +95,7 @@ func extract(archive, dest string, body *bodyWriter) (*stats, error) {
 	}
 	tr := tar.NewReader(r)
 	parents := &parentChecker{dest: dest}
+	seen := newPathSet()
 
 	lastReport := time.Now()
 	for {
@@ -126,7 +128,7 @@ func extract(archive, dest string, body *bodyWriter) (*stats, error) {
 
 		err = parents.check(target)
 		if err == nil {
-			err = extractEntry(tr, hdr, target, st)
+			err = extractEntry(tr, hdr, target, st, seen)
 		}
 		if err != nil {
 			// Errors writing to disk (full disk, permissions) are fatal so we
@@ -187,15 +189,40 @@ func (p *parentChecker) check(target string) error {
 	return nil
 }
 
-func extractEntry(tr *tar.Reader, hdr *tar.Header, target string, st *stats) error {
+// pathSet records which paths this run has already extracted, so that when
+// an archive contains the same path twice (e.g. from "tar -r"), the later
+// copy isn't skipped just because the earlier one has the same size.
+//
+// Only 64-bit hashes are kept, to save memory on huge archives.  Paths are
+// lowercased because Windows and macOS usually ignore case.  Either way, a
+// false match only means a file gets rewritten unnecessarily.
+type pathSet struct {
+	seed maphash.Seed
+	m    map[uint64]struct{}
+}
+
+func newPathSet() *pathSet {
+	return &pathSet{seed: maphash.MakeSeed(), m: make(map[uint64]struct{})}
+}
+
+// add records path and reports whether it was already present.
+func (s *pathSet) add(path string) bool {
+	h := maphash.String(s.seed, strings.ToLower(path))
+	_, ok := s.m[h]
+	s.m[h] = struct{}{}
+	return ok
+}
+
+func extractEntry(tr *tar.Reader, hdr *tar.Header, target string, st *stats, seen *pathSet) error {
 	switch hdr.Typeflag {
 	case tar.TypeDir:
 		st.dirs++
 		return os.MkdirAll(target, 0o755)
 
 	case tar.TypeReg, tar.TypeRegA, tar.TypeGNUSparse:
+		dup := seen.add(target)
 		if fi, err := os.Lstat(target); err == nil {
-			if fi.Mode().IsRegular() && fi.Size() == hdr.Size {
+			if fi.Mode().IsRegular() && fi.Size() == hdr.Size && !dup {
 				st.skipped++
 				st.bytesSkipped += hdr.Size
 				return nil
