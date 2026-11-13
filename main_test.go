@@ -206,24 +206,25 @@ func TestUnsafePaths(t *testing.T) {
 		t.Errorf("escape.txt was written outside dest")
 	}
 	assertFile(t, filepath.Join(dest, "ok.txt"), "good")
-	if st.failed != 3 || st.written != 1 {
+	if st.failed != 2 || st.written != 1 || st.hardlinks != 1 {
 		t.Errorf("stats = %+v", *st)
 	}
 }
 
-func TestHardLink(t *testing.T) {
+func TestHardLinkNotExtracted(t *testing.T) {
 	archive := writeArchive(t, false,
 		file("orig.txt", "shared"),
 		entry{name: "sub/link.txt", typ: tar.TypeLink, linkname: "orig.txt"},
 	)
 	dest := t.TempDir()
-	mustExtract(t, archive, dest)
-	assertFile(t, filepath.Join(dest, "sub", "link.txt"), "shared")
-
-	// Rerun with the link already in place is a no-op.
 	st := mustExtract(t, archive, dest)
-	if st.written != 0 || st.failed != 0 {
-		t.Errorf("rerun stats = %+v", *st)
+	assertFile(t, filepath.Join(dest, "orig.txt"), "shared")
+	if _, err := os.Lstat(filepath.Join(dest, "sub", "link.txt")); !os.IsNotExist(err) {
+		t.Errorf("hard link was extracted: %v", err)
+	}
+	// Skipping hard links is intended, not a failure.
+	if st.hardlinks != 1 || st.failed != 0 {
+		t.Errorf("stats = %+v", *st)
 	}
 }
 

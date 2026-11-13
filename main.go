@@ -32,8 +32,8 @@ const partialSuffix = ".tarpit-partial"
 var verbose = flag.Bool("v", false, "print each file as it is written")
 
 type stats struct {
-	written, skipped, dirs, links, failed int
-	bytesWritten, bytesSkipped           int64
+	written, skipped, dirs, symlinks, hardlinks, failed int
+	bytesWritten, bytesSkipped                          int64
 }
 
 func main() {
@@ -72,8 +72,8 @@ func main() {
 			err = fmt.Errorf("writing body file: %w", ferr)
 		}
 	}
-	log.Printf("done: %d written (%s), %d skipped (%s), %d dirs, %d links, %d failed",
-		st.written, human(st.bytesWritten), st.skipped, human(st.bytesSkipped), st.dirs, st.links, st.failed)
+	log.Printf("done: %d written (%s), %d skipped (%s), %d dirs, %d symlinks, %d hard links not extracted, %d failed",
+		st.written, human(st.bytesWritten), st.skipped, human(st.bytesSkipped), st.dirs, st.symlinks, st.hardlinks, st.failed)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -127,10 +127,10 @@ func extract(archive, dest string, body *bodyWriter) (*stats, error) {
 		}
 		target := filepath.Join(dest, filepath.FromSlash(hdr.Name))
 
-		if err := extractEntry(tr, hdr, dest, target, st); err != nil {
+		if err := extractEntry(tr, hdr, target, st); err != nil {
 			// Errors writing to disk (full disk, permissions) are fatal so we
 			// don't plow through millions of entries failing each one.
-			// Unsupported entry types and link failures are only warnings.
+			// Unsupported entry types and symlink failures are only warnings.
 			var w warning
 			if errors.As(err, &w) {
 				log.Printf("warning: %s: %v", hdr.Name, err)
@@ -144,7 +144,7 @@ func extract(archive, dest string, body *bodyWriter) (*stats, error) {
 
 type warning struct{ error }
 
-func extractEntry(tr *tar.Reader, hdr *tar.Header, dest, target string, st *stats) error {
+func extractEntry(tr *tar.Reader, hdr *tar.Header, target string, st *stats) error {
 	switch hdr.Typeflag {
 	case tar.TypeDir:
 		st.dirs++
@@ -167,7 +167,7 @@ func extractEntry(tr *tar.Reader, hdr *tar.Header, dest, target string, st *stat
 		return nil
 
 	case tar.TypeSymlink:
-		st.links++
+		st.symlinks++
 		if _, err := os.Lstat(target); err == nil {
 			return nil
 		}
@@ -180,34 +180,15 @@ func extractEntry(tr *tar.Reader, hdr *tar.Header, dest, target string, st *stat
 		return nil
 
 	case tar.TypeLink:
-		st.links++
-		if !filepath.IsLocal(filepath.FromSlash(hdr.Linkname)) {
-			return warning{fmt.Errorf("unsafe hard link target %q", hdr.Linkname)}
+		// Hard links are deliberately not extracted.  Linking or copying
+		// from another path in the destination can be steered by symlinks
+		// in the archive to files outside it.  They still appear in the
+		// body file.
+		st.hardlinks++
+		if *verbose {
+			log.Printf("not extracting hard link %s -> %s", hdr.Name, hdr.Linkname)
 		}
-		src := filepath.Join(dest, filepath.FromSlash(hdr.Linkname))
-		srcInfo, err := os.Stat(src)
-		if err != nil {
-			return warning{fmt.Errorf("hard link target: %w", err)}
-		}
-		if fi, err := os.Stat(target); err == nil && fi.Mode().IsRegular() && fi.Size() == srcInfo.Size() {
-			return nil
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		os.Remove(target)
-		if err := os.Link(src, target); err == nil {
-			return nil
-		}
-		// Hard links can fail (e.g. FAT/exFAT); fall back to a copy.
-		in, err := os.Open(src)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		h := *hdr
-		h.Size = srcInfo.Size()
-		return writeFile(in, &h, target)
+		return nil
 
 	case tar.TypeXGlobalHeader:
 		return nil

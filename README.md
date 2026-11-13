@@ -36,6 +36,10 @@ tarpit [-C dir] [-v] [--body-file file] archive.tar[.gz|.bz2]
 
 Gzip and bzip2 archives are detected automatically.
 
+Hard links are not extracted.  Recreating them means linking or copying from
+another path in the destination, which a malicious archive can use symlinks to
+redirect to files outside it.  They are still listed in the body file.
+
 ## How resuming works
 
 - A regular file is skipped if a file already exists at its destination with
