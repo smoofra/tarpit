@@ -24,6 +24,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -97,6 +98,7 @@ func extract(archive, dest string, body *bodyWriter) (*stats, error) {
 		return st, err
 	}
 	tr := tar.NewReader(r)
+	parents := &parentChecker{dest: dest}
 
 	lastReport := time.Now()
 	for {
@@ -127,7 +129,11 @@ func extract(archive, dest string, body *bodyWriter) (*stats, error) {
 		}
 		target := filepath.Join(dest, filepath.FromSlash(hdr.Name))
 
-		if err := extractEntry(tr, hdr, target, st); err != nil {
+		err = parents.check(target)
+		if err == nil {
+			err = extractEntry(tr, hdr, target, st)
+		}
+		if err != nil {
 			// Errors writing to disk (full disk, permissions) are fatal so we
 			// don't plow through millions of entries failing each one.
 			// Unsupported entry types and symlink failures are only warnings.
@@ -144,6 +150,48 @@ func extract(archive, dest string, body *bodyWriter) (*stats, error) {
 
 type warning struct{ error }
 
+// parentChecker refuses paths whose parent directories, below dest, include
+// anything but real directories.  Otherwise an archive could create a symlink
+// like "evil -> /etc" and then write "evil/passwd" through it.  Missing
+// directories are fine: MkdirAll will create real ones.
+type parentChecker struct {
+	dest string
+	// lastOK caches the most recently verified directory, since archives
+	// tend to list many files from the same directory in a row.  A symlink
+	// can't appear at or under it without first being checked itself, which
+	// moves lastOK to the symlink's parent.
+	lastOK string
+}
+
+func (p *parentChecker) check(target string) error {
+	dir := filepath.Dir(target)
+	if dir == p.lastOK {
+		return nil
+	}
+	rel, err := filepath.Rel(p.dest, dir)
+	if err != nil {
+		return err
+	}
+	if rel != "." {
+		cur := p.dest
+		for _, part := range strings.Split(rel, string(filepath.Separator)) {
+			cur = filepath.Join(cur, part)
+			fi, err := os.Lstat(cur)
+			if errors.Is(err, fs.ErrNotExist) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if fi.Mode().Type() != fs.ModeDir {
+				return warning{fmt.Errorf("refusing to write through %s: not a directory", cur)}
+			}
+		}
+	}
+	p.lastOK = dir
+	return nil
+}
+
 func extractEntry(tr *tar.Reader, hdr *tar.Header, target string, st *stats) error {
 	switch hdr.Typeflag {
 	case tar.TypeDir:
@@ -151,7 +199,7 @@ func extractEntry(tr *tar.Reader, hdr *tar.Header, target string, st *stats) err
 		return os.MkdirAll(target, 0o755)
 
 	case tar.TypeReg, tar.TypeRegA, tar.TypeGNUSparse:
-		if fi, err := os.Stat(target); err == nil && fi.Mode().IsRegular() && fi.Size() == hdr.Size {
+		if fi, err := os.Lstat(target); err == nil && fi.Mode().IsRegular() && fi.Size() == hdr.Size {
 			st.skipped++
 			st.bytesSkipped += hdr.Size
 			return nil
@@ -205,7 +253,12 @@ func writeFile(r io.Reader, hdr *tar.Header, target string) error {
 		return err
 	}
 	tmp := target + partialSuffix
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	// Remove a stale partial file first and create exclusively, so that a
+	// symlink at the temporary name is never followed.
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}

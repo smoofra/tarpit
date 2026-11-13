@@ -265,12 +265,15 @@ func TestUnsupportedTypeIsWarning(t *testing.T) {
 }
 
 func TestWriteErrorIsFatal(t *testing.T) {
-	archive := writeArchive(t, false, file("blocked/f.txt", "x"), file("later.txt", "y"))
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("needs Unix permissions enforced")
+	}
+	archive := writeArchive(t, false, file("f.txt", "x"), file("later.txt", "y"))
 	dest := t.TempDir()
-	// A regular file where a directory needs to go makes MkdirAll fail.
-	if err := os.WriteFile(filepath.Join(dest, "blocked"), nil, 0o644); err != nil {
+	if err := os.Chmod(dest, 0o555); err != nil {
 		t.Fatal(err)
 	}
+	defer os.Chmod(dest, 0o755)
 	if _, err := extract(archive, dest, nil); err == nil {
 		t.Fatal("expected error")
 	}
@@ -314,5 +317,72 @@ func TestHuman(t *testing.T) {
 		if got := human(tc.n); got != tc.want {
 			t.Errorf("human(%d) = %q, want %q", tc.n, got, tc.want)
 		}
+	}
+}
+
+func TestRefusesWritingThroughSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	outside := t.TempDir()
+	archive := writeArchive(t, false,
+		entry{name: "evil", typ: tar.TypeSymlink, linkname: outside},
+		file("evil/x.txt", "bad"),
+		dir("evil/sub/"),
+		file("evil/sub/y.txt", "bad"),
+		entry{name: "d/up", typ: tar.TypeSymlink, linkname: "../../.."},
+		file("d/up/z.txt", "bad"),
+		file("d/ok.txt", "good"),
+	)
+	dest := t.TempDir()
+	st, err := extract(archive, dest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("wrote outside dest: %v", entries)
+	}
+	assertFile(t, filepath.Join(dest, "d", "ok.txt"), "good")
+	if st.failed != 4 || st.written != 1 {
+		t.Errorf("stats = %+v", *st)
+	}
+}
+
+func TestRefusesSymlinkAtPartialName(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	outside := filepath.Join(t.TempDir(), "victim")
+	archive := writeArchive(t, false,
+		entry{name: "f.txt" + partialSuffix, typ: tar.TypeSymlink, linkname: outside},
+		file("f.txt", "contents"),
+	)
+	dest := t.TempDir()
+	mustExtract(t, archive, dest)
+	if _, err := os.Lstat(outside); !os.IsNotExist(err) {
+		t.Errorf("wrote through symlink at partial name: %v", err)
+	}
+	assertFile(t, filepath.Join(dest, "f.txt"), "contents")
+}
+
+func TestSymlinkAtCachedParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	outside := t.TempDir()
+	// The fifo is unsupported, so "d" is checked and cached as a safe parent
+	// but never created.  A symlink then appears at "d", and "d/y.txt" must
+	// not get through on the strength of a stale cache.
+	archive := writeArchive(t, false,
+		entry{name: "d/fifo", typ: tar.TypeFifo},
+		entry{name: "d", typ: tar.TypeSymlink, linkname: outside},
+		file("d/y.txt", "bad"),
+	)
+	dest := t.TempDir()
+	if _, err := extract(archive, dest, nil); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("wrote outside dest: %v", entries)
 	}
 }
