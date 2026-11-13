@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"strings"
 	"time"
 )
@@ -56,30 +55,27 @@ func (nopCloser) Close() error { return nil }
 // MD5 and inode are always 0: hashing would mean reading the data of files
 // we skip, and tar has no inodes.  Times tar doesn't record are 0.  Names are
 // escaped (see escapeName) so they can't break the line format.
+//
+// Hard links are listed as "name -> target" with size 0, as tar records
+// them.  Looking up the target's size would mean remembering every file in
+// the archive.  Their "r/r" mode distinguishes them from symlinks ("l/l").
 type bodyWriter struct {
 	w io.Writer
-	// sizes remembers regular file sizes so hard links, which have no size of
-	// their own in tar, can report the size of the file they point to.
-	sizes map[string]int64
 }
 
 func newBodyWriter(w io.Writer) *bodyWriter {
-	return &bodyWriter{w: w, sizes: make(map[string]int64)}
+	return &bodyWriter{w: w}
 }
 
 func (b *bodyWriter) write(hdr *tar.Header) error {
 	size := hdr.Size
 	switch hdr.Typeflag {
-	case tar.TypeReg, tar.TypeRegA, tar.TypeGNUSparse:
-		b.sizes[path.Clean(hdr.Name)] = hdr.Size
-	case tar.TypeLink:
-		size = b.sizes[path.Clean(hdr.Linkname)]
-	case tar.TypeDir, tar.TypeSymlink:
+	case tar.TypeDir, tar.TypeSymlink, tar.TypeLink:
 		size = 0
 	}
 
 	name := escapeName(hdr.Name)
-	if hdr.Typeflag == tar.TypeSymlink {
+	if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
 		name += " -> " + escapeName(hdr.Linkname)
 	}
 

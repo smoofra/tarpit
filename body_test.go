@@ -68,7 +68,7 @@ func TestBodyFile(t *testing.T) {
 		"0|dir/|0|d/drwxr-xr-x|1000|100|0|0|1600000000|0|0",
 		"0|dir/file.txt|0|r/rrw-r--r--|1000|100|42|1600000100|1600000000|1600000200|0",
 		"0|dir/sym -> file.txt|0|l/lrwxrwxrwx|0|0|0|0|1600000100|0|0",
-		"0|dir/hard.txt|0|r/rrw-r--r--|0|0|42|0|1600000000|0|0",
+		"0|dir/hard.txt -> dir/file.txt|0|r/rrw-r--r--|0|0|0|0|1600000000|0|0",
 		"0|fifo|0|p/prw-------|0|0|0|0|1600000200|0|0",
 		// Refused entries are still listed: the body file describes the archive.
 		"0|../evil.txt|0|r/rrw-r--r--|0|0|3|0|1600000000|0|0",

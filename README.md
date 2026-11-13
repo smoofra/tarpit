@@ -68,4 +68,5 @@ body file.
   newline are written as `\xNN`, so every line has exactly 11 fields.
 - atime and ctime are filled in only when the archive records them (PAX or GNU
   format); crtime is always `0`.
-- Hard links report the size of the file they link to.
+- Hard links are listed as `name -> target` with size `0`, as tar records
+  them.  Their `r/r` mode distinguishes them from symlinks (`l/l`).
