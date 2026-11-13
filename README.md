@@ -64,6 +64,8 @@ because they were already extracted, so a resumed run still produces a complete
 body file.
 
 - MD5 and inode are always `0`.
+- In names, `\` is written as `\\`, and `|` and control characters such as
+  newline are written as `\xNN`, so every line has exactly 11 fields.
 - atime and ctime are filled in only when the archive records them (PAX or GNU
   format); crtime is always `0`.
 - Hard links report the size of the file they link to.

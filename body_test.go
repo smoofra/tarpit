@@ -202,3 +202,37 @@ func TestOpenBodyFile(t *testing.T) {
 		t.Errorf("body file = %q", got)
 	}
 }
+
+func TestBodyFileEscapesNames(t *testing.T) {
+	// Written directly rather than extracted, since some of these names
+	// aren't valid filenames on Windows.
+	var buf bytes.Buffer
+	bw := newBodyWriter(&buf)
+	for _, h := range []*tar.Header{
+		{Name: "a|b", Typeflag: tar.TypeReg, Mode: 0o644, ModTime: t1},
+		{Name: "line\nbreak", Typeflag: tar.TypeReg, Mode: 0o644, ModTime: t1},
+		{Name: `back\slash`, Typeflag: tar.TypeReg, Mode: 0o644, ModTime: t1},
+		{Name: "sym", Typeflag: tar.TypeSymlink, Linkname: "x|\ty", Mode: 0o777, ModTime: t1},
+		{Name: "naïve.txt", Typeflag: tar.TypeReg, Mode: 0o644, ModTime: t1},
+	} {
+		if err := bw.write(h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := buf.String()
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) != 5 {
+		t.Fatalf("got %d lines, want 5:\n%s", len(lines), got)
+	}
+	wantNames := []string{`a\x7cb`, `line\x0abreak`, `back\\slash`, `sym -> x\x7c\x09y`, "naïve.txt"}
+	for i, line := range lines {
+		fields := strings.Split(line, "|")
+		if len(fields) != 11 {
+			t.Errorf("line %d has %d fields, want 11: %q", i, len(fields), line)
+			continue
+		}
+		if fields[1] != wantNames[i] {
+			t.Errorf("line %d name = %q, want %q", i, fields[1], wantNames[i])
+		}
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strings"
 	"time"
 )
 
@@ -53,7 +54,8 @@ func (nopCloser) Close() error { return nil }
 //	MD5|name|inode|mode_as_string|UID|GID|size|atime|mtime|ctime|crtime
 //
 // MD5 and inode are always 0: hashing would mean reading the data of files
-// we skip, and tar has no inodes.  Times tar doesn't record are 0.
+// we skip, and tar has no inodes.  Times tar doesn't record are 0.  Names are
+// escaped (see escapeName) so they can't break the line format.
 type bodyWriter struct {
 	w io.Writer
 	// sizes remembers regular file sizes so hard links, which have no size of
@@ -76,15 +78,39 @@ func (b *bodyWriter) write(hdr *tar.Header) error {
 		size = 0
 	}
 
-	name := hdr.Name
+	name := escapeName(hdr.Name)
 	if hdr.Typeflag == tar.TypeSymlink {
-		name += " -> " + hdr.Linkname
+		name += " -> " + escapeName(hdr.Linkname)
 	}
 
 	_, err := fmt.Fprintf(b.w, "0|%s|0|%s|%d|%d|%d|%d|%d|%d|0\n",
 		name, modeString(hdr), hdr.Uid, hdr.Gid, size,
 		epoch(hdr.AccessTime), epoch(hdr.ModTime), epoch(hdr.ChangeTime))
 	return err
+}
+
+// escapeName makes a name safe for a body file line: backslash becomes "\\",
+// and "|" and control characters such as newline become "\xNN".
+func escapeName(s string) string {
+	if !strings.ContainsFunc(s, needsEscape) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '\\':
+			b.WriteString(`\\`)
+		case needsEscape(rune(c)):
+			fmt.Fprintf(&b, `\x%02x`, c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+func needsEscape(r rune) bool {
+	return r == '|' || r == '\\' || r < 0x20 || r == 0x7f
 }
 
 func epoch(t time.Time) int64 {
